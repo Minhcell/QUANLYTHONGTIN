@@ -1,0 +1,25 @@
+{
+  "name": "sothuebao",
+  "productName": "SoThueBao",
+  "version": "1.0.0",
+  "description": "Sổ Thuê Bao - nhập liệu và tra cứu thuê bao (offline)",
+  "main": "main.js",
+  "author": "Hi",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "vn.sothuebao.pc",
+    "productName": "SoThueBao",
+    "files": ["main.js", "preload.js", "web/**/*"],
+    "directories": { "output": "dist" },
+    "win": { "target": [{ "target": "portable", "arch": ["x64"] }] },
+    "portable": { "artifactName": "SoThueBao.exe", "unpackDirName": "SoThueBao" }
+  }
+}
