@@ -13,6 +13,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Kiểm tra đủ file
+        shell: bash
+        run: |
+          ls -la pc web
+          for f in pc/package.json pc/main.js pc/preload.js web/index.html web/xlsx.full.min.js; do
+            if [ ! -f "$f" ]; then echo "::error::Thiếu file $f trên GitHub. Hãy upload lại file này."; missing=1; fi
+          done
+          [ -z "$missing" ]
       - name: Copy giao diện web vào bản PC
         shell: bash
         run: rm -rf pc/web && cp -r web pc/web
