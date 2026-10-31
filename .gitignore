@@ -1,0 +1,7 @@
+pc/node_modules/
+pc/dist/
+pc/web/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
