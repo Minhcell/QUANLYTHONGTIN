@@ -118,6 +118,13 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .pill.new{background:var(--accent-soft);color:var(--accent)}
 .pill.dup{background:var(--mark);color:var(--fg)}
 .pill.bad{color:var(--danger);border:1px solid var(--danger)}
+.pill.same{background:var(--danger);color:#fff}
+.pill.near{background:var(--mark);color:var(--fg);border:1px solid color-mix(in srgb,var(--fg) 25%,transparent)}
+td .pill.near{margin-left:6px;font-size:.68rem;cursor:help}
+.warnbox{margin-top:10px;padding:10px 12px;border-radius:8px;font-size:.88rem;line-height:1.45;border:1px solid var(--line)}
+.warnbox.near{background:var(--mark)}
+.warnbox.same{border-color:var(--danger);color:var(--danger);background:color-mix(in srgb,var(--danger) 8%,var(--surface))}
+.warnbox b{color:inherit}
 .opts{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:.88rem}
 .opts label{flex-direction:row;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--fg);font-size:.88rem}
 .opts input{width:auto}
@@ -225,6 +232,7 @@ td small{display:block;color:var(--muted);font-size:.78rem}
         <button class="btn" type="button" id="btn-cancel" hidden>Huỷ sửa</button>
         <span class="toast" id="toast" role="status"></span>
       </div>
+      <div class="warnbox" id="warn" role="alert" hidden></div>
     </form>
   </section>
 
@@ -237,12 +245,6 @@ td small{display:block;color:var(--muted);font-size:.78rem}
     </div>
     <div id="imp-preview" hidden>
       <p id="imp-info" style="margin:14px 0 0"></p>
-      <div class="opts" role="radiogroup" aria-label="Xử lý số đã có trong sổ">
-        <span style="color:var(--muted)">Số đã có trong sổ:</span>
-        <label><input type="radio" name="dupmode" id="dm-skip" value="skip" checked> Bỏ qua</label>
-        <label><input type="radio" name="dupmode" id="dm-update" value="update"> Cập nhật thông tin</label>
-        <label><input type="radio" name="dupmode" id="dm-add" value="add"> Vẫn thêm mới</label>
-      </div>
       <div class="prev-wrap"><table>
         <thead><tr><th>#</th><th>Số điện thoại</th><th>Họ và tên</th><th>Ngày sinh</th><th>CCCD/CMND</th><th>Ngày cấp</th><th>Địa chỉ</th><th>Ngày kích hoạt</th><th>Vị trí</th><th>Quan hệ vụ việc</th><th>Ghi chú</th><th>Tình trạng</th></tr></thead>
         <tbody id="imp-tb"></tbody>
@@ -430,7 +432,7 @@ td small{display:block;color:var(--muted);font-size:.78rem}
   const F = ["sdt","hoten","ngaysinh","cccd","ngaycap","diachi","ngaykh","vitri"];
   function clearForm(){ F.forEach(k=>$(k).value=""); closeCal(); ["sdt","hoten","ngaysinh","ngaykh","ngaycap"].forEach(k=>{$(k).removeAttribute("aria-invalid");$("h-"+k).textContent="";}); }
   function exitEdit(){ editingId=null; $("form-title").textContent="Thêm thuê bao mới"; $("btn-save").textContent="Lưu thuê bao"; $("btn-cancel").hidden=true; }
-  $("btn-clear").onclick = ()=>{ clearForm(); $("sdt").focus(); };
+  $("btn-clear").onclick = ()=>{ clearForm(); showWarn(null); $("sdt").focus(); };
   // viết hoa chữ cái đầu mỗi từ khi nhập họ tên
   const capWords = v => v.replace(/(^|\s)(\S)/g, (m,a,b)=>a+b.toLocaleUpperCase("vi"));
   $("hoten").addEventListener("input", e=>{
@@ -455,7 +457,6 @@ td small{display:block;color:var(--muted);font-size:.78rem}
       else { $(k).removeAttribute("aria-invalid"); $("h-"+k).textContent=""; }
     }
     if(!ok) return;
-    const dup = rows.find(r=>r.sdt===sdt && r.id!==editingId);
     const old = editingId ? rows.find(r=>r.id===editingId) : null;
     const isISO = v => /^\d{4}-\d{2}-\d{2}$/.test(v||"");
     const r = {
@@ -467,10 +468,17 @@ td small{display:block;color:var(--muted);font-size:.78rem}
       ngaykh: getD("ngaykh"), vitri: $("vitri").value.trim(),
       taoLuc: old?.taoLuc || new Date().toISOString(), suaLuc: new Date().toISOString()
     };
+    const chk = checkDup(r, buildDupIndex(rows), editingId);
+    if(chk.type==="same"){
+      showWarn("same", `<b>Không lưu:</b> thông tin trùng hoàn toàn (Số điện thoại, Họ tên, CCCD/CMND, Ngày sinh) với thuê bao đã có: <b>${esc(recLabel(chk.rec))}</b>.`);
+      toast("Không lưu vì trùng hoàn toàn.","err"); return;
+    }
     $("btn-save").disabled = true;
     try{
       await saveRow(r);
-      toast(editingId ? "Đã cập nhật thuê bao "+fmtPhone(sdt)+"." : "Đã lưu thuê bao "+fmtPhone(sdt)+(dup?" (lưu ý: số này đã có trong sổ)":"")+".", dup?"err":"ok");
+      toast(editingId ? "Đã cập nhật thuê bao "+fmtPhone(sdt)+"." : "Đã lưu thuê bao "+fmtPhone(sdt)+".", chk.type==="near"?"err":"ok");
+      if(chk.type==="near") showWarn("near", `<span class="pill near">Gần giống</span> Đã lưu, nhưng có cột <b>${esc(dupNames(chk.keys))}</b> trùng với thuê bao đã có: <b>${esc(recLabel(chk.rec))}</b>.`);
+      else showWarn(null);
       const wasEdit = !!editingId;
       clearForm(); exitEdit();
       if(wasEdit) showTab("tra"); else $("sdt").focus();
@@ -478,6 +486,26 @@ td small{display:block;color:var(--muted);font-size:.78rem}
       toast("Chưa lưu được: "+(err?.code==="permission_denied"?"bạn không có quyền ghi vào sổ này.":"lỗi kết nối, hãy thử lại."),"err");
     }finally{ $("btn-save").disabled=false; }
   });
+
+  /* ---------- kiểm tra trùng: SĐT, Họ tên, CCCD/CMND, Ngày sinh ---------- */
+  const DUPF = [["sdt","Số điện thoại"],["hoten","Họ tên"],["cccd","CCCD/CMND"],["ngaysinh","Ngày sinh"]];
+  const dupVal = (r,k) => k==="hoten" ? fold(r.hoten) : k==="sdt" ? digits(r.sdt) : String(r[k]||"").replace(/\s+/g,"").toUpperCase();
+  function buildDupIndex(list){ const idx={}; DUPF.forEach(([k])=>idx[k]=new Map()); list.forEach(r=>addDupIndex(idx,r)); return idx; }
+  function addDupIndex(idx,r){ for(const [k] of DUPF){ const v=dupVal(r,k); if(!v) continue; let a=idx[k].get(v); if(!a) idx[k].set(v,a=[]); a.push(r); } }
+  function checkDup(x, idx, exceptId){
+    const cand = new Set();
+    for(const [k] of DUPF){ const v=dupVal(x,k); if(v) (idx[k].get(v)||[]).forEach(r=>{ if(r.id!==exceptId && r!==x) cand.add(r); }); }
+    let best=null, bestKeys=[];
+    for(const r of cand){
+      if(DUPF.every(([k])=>dupVal(x,k)===dupVal(r,k))) return {type:"same", rec:r, keys:DUPF.map(([k])=>k)};
+      const keys = DUPF.filter(([k])=>dupVal(x,k) && dupVal(x,k)===dupVal(r,k)).map(([k])=>k);
+      if(keys.length>bestKeys.length){ best=r; bestKeys=keys; }
+    }
+    return best ? {type:"near", rec:best, keys:bestKeys} : {type:"new"};
+  }
+  const dupNames = keys => keys.map(k=>DUPF.find(f=>f[0]===k)[1]).join(", ");
+  const recLabel = r => [fmtPhone(r.sdt), r.hoten, r.cccd, fmtDate(r.ngaysinh)].filter(Boolean).join(" – ");
+  function showWarn(type, html){ const w=$("warn"); if(!type){ w.hidden=true; w.innerHTML=""; return; } w.className="warnbox "+type; w.innerHTML=html; w.hidden=false; }
 
   /* ---------- tra cứu ---------- */
   function hlText(text, q, folded){
@@ -511,18 +539,24 @@ td small{display:block;color:var(--muted);font-size:.78rem}
     if(pendingDel===r.id) return `<span class="confirm">Xoá thuê bao này? <button class="btn small danger" data-act="del-yes" data-id="${r.id}">Xoá</button><button class="btn small" data-act="del-no">Không</button></span>`;
     return `<button class="btn small" data-act="edit" data-id="${r.id}">Sửa</button> <button class="btn small danger" data-act="del" data-id="${r.id}">Xoá</button>`;
   }
+  function nearPill(r, idx){
+    const c = checkDup(r, idx, r.id); if(c.type==="new") return "";
+    const t = (c.type==="same" ? "Trùng hoàn toàn" : "Trùng "+dupNames(c.keys)) + " với: " + recLabel(c.rec);
+    return `<span class="pill near" title="${esc(t)}">Gần giống</span>`;
+  }
   function render(res, qd, qt){
+    const didx = buildDupIndex(rows);
     if(!res.length){
       $("tb").innerHTML = `<tr><td colspan="11" class="empty">Không có thuê bao nào khớp điều kiện.</td></tr>`;
       $("cards").innerHTML = `<div class="empty">Không có thuê bao nào khớp điều kiện.</div>`; return;
     }
     $("tb").innerHTML = res.map((r,i)=>`<tr>
-      <td>${i+1}</td><td class="num">${hlPhone(r.sdt,qd)}</td><td>${hlText(r.hoten,qt,true)}</td>
+      <td>${i+1}</td><td class="num">${hlPhone(r.sdt,qd)}${nearPill(r,didx)}</td><td>${hlText(r.hoten,qt,true)}</td>
       <td class="date">${fmtDate(r.ngaysinh)}</td>
       <td class="num">${esc(r.cccd)}${r.ngaycap?`<small>Cấp ${fmtDate(r.ngaycap)}</small>`:""}</td><td>${esc(r.diachi)}</td>
       <td class="date">${fmtDate(r.ngaykh)}</td><td>${esc(r.vitri)}</td><td>${esc(r.quanhe)}</td><td>${esc(r.ghichu)}</td><td class="ops">${opsHtml(r)}</td></tr>`).join("");
     $("cards").innerHTML = res.map(r=>`<div class="card">
-      <div class="phone">${hlPhone(r.sdt,qd)}</div><div class="name">${hlText(r.hoten,qt,true)}</div>
+      <div class="phone">${hlPhone(r.sdt,qd)} ${nearPill(r,didx)}</div><div class="name">${hlText(r.hoten,qt,true)}</div>
       <dl><dt>Ngày sinh</dt><dd>${fmtDate(r.ngaysinh)||"—"}</dd>
       <dt>CCCD/CMND</dt><dd>${esc(r.cccd)||"—"}${r.ngaycap?` · cấp ${fmtDate(r.ngaycap)}`:""}</dd>
       <dt>Địa chỉ</dt><dd>${esc(r.diachi)||"—"}</dd>
@@ -716,38 +750,41 @@ td small{display:block;color:var(--muted);font-size:.78rem}
   });
 
   function renderImport(kind, sheet){
-    const have = new Set(rows.map(r=>r.sdt));
-    const ok = importRows.filter(x=>!x.bad), dup = ok.filter(x=>have.has(x.sdt)).length, bad = importRows.length-ok.length;
-    $("imp-info").innerHTML = `Nhận dạng: <b>${esc(kind)}</b>, trang “${esc(sheet)}”. Đọc được <b>${importRows.length}</b> dòng: <b>${ok.length-dup}</b> số mới, <b>${dup}</b> số đã có trong sổ` + (bad?`, <b>${bad}</b> dòng sai số điện thoại (sẽ bỏ qua)`:"") + ".";
+    const idx = buildDupIndex(rows); let nNew=0, nNear=0, nSame=0, bad=0;
+    importRows.forEach((x,i)=>{ x.id = x.id || ("imp"+i);
+      if(x.bad){ bad++; x.st=null; return; }
+      x.st = checkDup(x, idx, x.id);
+      if(x.st.type==="same") nSame++; else { addDupIndex(idx, x); x.st.type==="near" ? nNear++ : nNew++; } });
+    const ok = importRows.filter(x=>!x.bad && x.st.type!=="same");
+    $("imp-info").innerHTML = `Nhận dạng: <b>${esc(kind)}</b>, trang “${esc(sheet)}”. Đọc được <b>${importRows.length}</b> dòng: <b>${nNew}</b> mới, <b>${nNear}</b> gần giống (vẫn lưu), <b>${nSame}</b> trùng hoàn toàn (không lưu)` + (bad?`, <b>${bad}</b> dòng sai số điện thoại (bỏ qua)`:"") + ".";
+    const stPill = x => x.bad ? '<span class="pill bad">Sai số</span>'
+      : x.st.type==="same" ? `<span class="pill same" title="${esc("Trùng với: "+recLabel(x.st.rec))}">Trùng – không lưu</span>`
+      : x.st.type==="near" ? `<span class="pill near" title="${esc("Trùng với: "+recLabel(x.st.rec))}">Gần giống: ${esc(dupNames(x.st.keys))}</span>`
+      : '<span class="pill new">Mới</span>';
     const LIM = 300;
     $("imp-tb").innerHTML = importRows.slice(0,LIM).map((x,i)=>`<tr>
       <td>${i+1}</td><td class="num">${esc(x.bad ? (x.sdt||"(trống)") : fmtPhone(x.sdt))}</td><td>${esc(x.hoten)}</td><td class="date">${fmtDate(x.ngaysinh)}</td>
       <td class="num">${esc(x.cccd)}</td><td class="date">${fmtDate(x.ngaycap)}</td><td>${esc(x.diachi)}</td><td class="date">${fmtDate(x.ngaykh)}</td>
       <td>${esc(x.vitri)}</td><td>${esc(x.quanhe)}</td><td>${esc(x.ghichu)}</td>
-      <td>${x.bad?'<span class="pill bad">Sai số</span>':have.has(x.sdt)?'<span class="pill dup">Đã có</span>':'<span class="pill new">Mới</span>'}</td></tr>`).join("")
+      <td>${stPill(x)}</td></tr>`).join("")
       + (importRows.length>LIM ? `<tr><td colspan="12" class="empty">… và ${importRows.length-LIM} dòng nữa (vẫn được thêm khi bấm Thêm vào sổ).</td></tr>` : "");
     $("imp-preview").hidden = false;
     $("btn-import").disabled = !ok.length;
   }
 
   $("btn-import").onclick = async ()=>{
-    const mode = document.querySelector('input[name="dupmode"]:checked').value;
-    const bySdt = new Map(); rows.forEach(r=>{ if(!bySdt.has(r.sdt)) bySdt.set(r.sdt, r); });
-    const now = new Date().toISOString(), todo = [];
-    let skipped = 0, updated = 0, added = 0;
+    const idx = buildDupIndex(rows), now = new Date().toISOString(), todo = [];
+    let skipped = 0, near = 0, added = 0;
     for(const x of importRows){
       if(x.bad) continue;
-      const {bad, ...data} = x;
-      const ex = bySdt.get(x.sdt);
-      if(ex && mode==="skip"){ skipped++; continue; }
-      if(ex && mode==="update"){
-        const merged = {...ex}; for(const k in data){ if(data[k]) merged[k]=data[k]; } merged.suaLuc = now;
-        todo.push(merged); bySdt.set(x.sdt, merged); updated++; continue;
-      }
+      const {bad, st, id, ...data} = x;
       const r = {id:newId(), ...data, taoLuc:now, suaLuc:now};
-      todo.push(r); bySdt.set(x.sdt, r); added++;
+      const c = checkDup(r, idx, r.id);
+      if(c.type==="same"){ skipped++; continue; }
+      if(c.type==="near") near++;
+      addDupIndex(idx, r); todo.push(r); added++;
     }
-    if(!todo.length){ $("imp-toast").className="toast err"; $("imp-toast").textContent=`Không có dòng nào cần thêm (bỏ qua ${skipped} số đã có).`; return; }
+    if(!todo.length){ $("imp-toast").className="toast err"; $("imp-toast").textContent=`Không có dòng nào được lưu: ${skipped} dòng trùng hoàn toàn với dữ liệu đã có.`; return; }
     $("btn-import").disabled = true; $("btn-imp-cancel").disabled = true;
     const t = $("imp-toast"); t.className="toast ok";
     let done = 0, fail = 0;
@@ -757,7 +794,8 @@ td small{display:block;color:var(--muted);font-size:.78rem}
       if(N && importFile){ try{ await N.saveFile("TepDaNhap", stampNow()+"_"+importFile.name, toB64(importFile.buf)); }catch(e){} }
     }
     t.className = fail ? "toast err" : "toast ok";
-    t.textContent = `Xong: thêm mới ${added}, cập nhật ${updated}, bỏ qua ${skipped}` + (fail?`, lỗi ${fail} dòng (thử lại)`:"") + ".";
+    t.className = (fail||near) ? "toast err" : "toast ok";
+    t.textContent = `Xong: đã lưu ${added} dòng (trong đó ${near} dòng gần giống, có cột trùng với dữ liệu đã có), không lưu ${skipped} dòng trùng hoàn toàn` + (fail?`, lỗi ${fail} dòng (thử lại)`:"") + ".";
     $("btn-import").disabled = false; $("btn-imp-cancel").disabled = false;
     if(!fail){ importRows=[]; $("imp-preview").hidden=true; $("xfile").value=""; $("imp-file").textContent="Đã nhập xong. Có thể chọn file khác."; $("imp-file").after(t); }
   };
