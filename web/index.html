@@ -155,7 +155,17 @@ td small{display:block;color:var(--muted);font-size:.78rem}
 .setup-box h2{margin:0;font-size:1.15rem}
 .setup-box p{margin:0;color:var(--muted);font-size:.9rem}
 .setup-path{font-family:var(--mono);font-size:.85rem;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow-wrap:anywhere;min-height:42px}
-.folder{font-size:.75rem;color:var(--muted);overflow-wrap:anywhere}
+.folder{font-size:.75rem;color:var(--muted);overflow-wrap:anywhere;display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.lanbtn{padding:2px 9px;font-size:.74rem}
+.lan-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:4px;vertical-align:middle}
+.lan-dot.on{background:var(--ok)}
+.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
+.row2{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:8px}
+@media (max-width:480px){.row2{grid-template-columns:minmax(0,1fr)}}
+.chk{flex-direction:row!important;align-items:center;gap:8px!important;text-transform:none!important;letter-spacing:0!important;font-size:.9rem!important;color:var(--fg)!important}
+.chk input{width:auto}
+.addr{font-family:var(--mono);font-size:.9rem;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow-wrap:anywhere;user-select:all}
+.setup-box{max-height:calc(100vh - 40px);overflow:auto}
 </style>
 </head>
 <body>
@@ -171,6 +181,16 @@ td small{display:block;color:var(--muted);font-size:.78rem}
       <button class="btn primary" type="button" id="setup-ok" disabled>OK</button>
       <span class="toast err" id="setup-err"></span>
     </div>
+    <hr class="sep">
+    <div id="setup-connect"></div>
+  </div>
+</div>
+
+<div class="setup" id="lan" hidden>
+  <div class="setup-box" role="dialog" aria-labelledby="lan-title">
+    <h2 id="lan-title">Mạng LAN nội bộ</h2>
+    <div id="lan-body"></div>
+    <div class="actions"><button class="btn" type="button" id="lan-close">Đóng</button></div>
   </div>
 </div>
 
@@ -178,7 +198,7 @@ td small{display:block;color:var(--muted);font-size:.78rem}
   <div class="top-in">
     <div class="brand">
       <h1>Sổ <span>Thuê Bao</span></h1>
-      <div style="text-align:right"><div class="count" id="count">Đang tải dữ liệu…</div><div class="folder" id="folder"></div></div>
+      <div style="text-align:right"><div class="count" id="count">Đang tải dữ liệu…</div><div class="folder"><span id="folder"></span><button class="btn small lanbtn" type="button" id="btn-lan"><span class="lan-dot" id="lan-dot"></span>Mạng LAN</button></div></div>
     </div>
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" id="tab-nhap" aria-selected="true" aria-controls="p-nhap">Nhập dữ liệu</button>
@@ -300,7 +320,7 @@ td small{display:block;color:var(--muted);font-size:.78rem}
   const LS = "sotb_local_v1";
   let rows = [], editingId = null, lastResults = null, lastQuery = null, pendingDel = null;
 
-  /* ---------- kho lưu trữ: exe (Electron), apk (Android) hoặc trình duyệt ---------- */
+  /* ---------- kho lưu trữ: exe (Electron), apk (Android), máy chủ LAN hoặc trình duyệt ---------- */
   const A = window.AndroidStore;
   const N = window.NativeStore || (A ? {
     status: async ()=>JSON.parse(A.status()),
@@ -311,14 +331,73 @@ td small{display:block;color:var(--muted);font-size:.78rem}
     saveFile: async (sub,name,b64)=>{ const r=A.saveFile(sub,name,b64); if(r.startsWith("ERR")) throw new Error(r); return r; },
     reveal: async ()=>{}
   } : null);
+  const isElectron = !!window.NativeStore;
   const toB64 = buf => { const u=new Uint8Array(buf); let s=""; for(let i=0;i<u.length;i+=0x8000) s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000)); return btoa(s); };
   const stampNow = () => { const d=new Date(), p=n=>String(n).padStart(2,"0"); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+  const parseData = raw => { if(!raw) return []; const j=JSON.parse(raw); return Array.isArray(j) ? j : (j.thueBao||[]); };
+  const snapshot = list => JSON.stringify({ungDung:"SoThueBao", phienBan:1, capNhat:new Date().toISOString(), thueBao:list}, null, 1);
+  const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  function downloadBlob(name, buf){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([buf],{type:XLSX_MIME})); a.download=name; document.body.appendChild(a); a.click(); a.remove(); }
+  function androidSaveAs(name, buf){ return new Promise(res=>{ window.__nativeSaved = m => res(m||""); A.saveAs(name, toB64(buf)); }); }
+
+  const servedByLan = /^https?:$/.test(location.protocol) && !N;   // trang mở từ máy chủ LAN bằng trình duyệt
+  const RKEY = "sotb_remote";
+  function getRemote(){
+    if(servedByLan){ let pass=""; try{ pass=localStorage.getItem("sotb_pass")||""; }catch(e){} return {url:location.origin, pass}; }
+    try{ const j=JSON.parse(localStorage.getItem(RKEY)||"null"); return j && j.url ? j : null; }catch(e){ return null; }
+  }
+  function setRemote(cfg){ try{ if(servedByLan){ localStorage.setItem("sotb_pass", cfg.pass||""); } else if(cfg) localStorage.setItem(RKEY, JSON.stringify(cfg)); else localStorage.removeItem(RKEY); }catch(e){} }
+  function normUrl(u){ u=String(u||"").trim().replace(/\/+$/,""); if(!u) return ""; if(!/^https?:\/\//i.test(u)) u="http://"+u; if(!/:\d+$/.test(u.replace(/^https?:\/\//i,""))) u+=":8686"; return u; }
+  async function api(cfg, path, body){
+    let res;
+    try{
+      res = await fetch(cfg.url+path, {method: body?"POST":"GET", cache:"no-store",
+        headers: {"Content-Type":"application/json", "X-Pass": encodeURIComponent(cfg.pass||"")}, body: body?JSON.stringify(body):undefined});
+    }catch(e){ const er=new Error("Không kết nối được máy chủ "+cfg.url.replace(/^https?:\/\//,"")+". Kiểm tra máy chủ đã bật và cùng mạng LAN."); er.code="net"; throw er; }
+    if(res.status===401){ const e=new Error("Sai mật khẩu máy chủ LAN."); e.code=401; throw e; }
+    if(!res.ok){ let m=""; try{ m=(await res.json()).error||""; }catch(_){} throw new Error("Máy chủ báo lỗi: "+(m||res.status)); }
+    return res.json();
+  }
+
+  let B = null;          // backend đang dùng
+  let lastVer = null;
   let saveChain = Promise.resolve();
-  function persist(){
-    if(!N){ lsSave(); return Promise.resolve(); }
-    const snap = JSON.stringify({ungDung:"SoThueBao", phienBan:1, capNhat:new Date().toISOString(), thueBao:rows}, null, 1);
-    saveChain = saveChain.then(()=>N.save(snap)).catch(e=>{ $("count").textContent="Lỗi ghi dữ liệu: "+(e&&e.message||e); throw e; });
-    return saveChain;
+  const chain = fn => (saveChain = saveChain.then(fn, fn));
+  function makeBackend(){
+    const rc = getRemote();
+    if(rc) return {
+      kind:"remote", cfg:rc,
+      load: async()=>{ const j=await api(rc,"/api/data"); return {rows:j.rows||[], ver:String(j.ver)}; },
+      ver: async()=>String((await api(rc,"/api/ver")).ver),
+      put: list=>api(rc,"/api/rows",{rows:list}),
+      del: id=>api(rc,"/api/delete",{id}),
+      saveFile: async(sub,name,b64)=>(await api(rc,"/api/file",{sub,name,b64})).path,
+      label: ()=>"Máy chủ LAN: "+rc.url.replace(/^https?:\/\//,"")
+    };
+    if(isElectron) return {
+      kind:"electron",
+      load: async()=>{ const raw=await N.load(); return {rows:parseData(raw), ver:String(await N.version())}; },
+      ver: async()=>String(await N.version()),
+      put: list=>N.putRows(list),
+      del: id=>N.delRow(id),
+      saveFile: (sub,name,b64)=>N.saveFile(sub,name,b64),
+      label: null
+    };
+    if(N) return {
+      kind:"android",
+      load: async()=>({rows:parseData(await N.load()), ver:null}),
+      ver: null,
+      put: (list, all)=>chain(()=>N.save(snapshot(all))),
+      del: (id, all)=>chain(()=>N.save(snapshot(all))),
+      saveFile: (sub,name,b64)=>N.saveFile(sub,name,b64),
+      label: null
+    };
+    return {
+      kind:"browser",
+      load: async()=>({rows:lsLoad(), ver:null}), ver:null,
+      put: async()=>lsSave(), del: async()=>lsSave(),
+      saveFile: null, label: null
+    };
   }
 
   /* ---------- tiện ích ---------- */
@@ -336,12 +415,21 @@ td small{display:block;color:var(--muted);font-size:.78rem}
   function lsLoad(){ try{ return JSON.parse(localStorage.getItem(LS)||"[]"); }catch(e){ return []; } }
   function lsSave(){ try{ localStorage.setItem(LS, JSON.stringify(rows)); }catch(e){} }
 
-  async function saveRow(r){
-    const i=rows.findIndex(x=>x.id===r.id); if(i>=0) rows[i]=r; else rows.push(r);
-    onData(); await persist();
+  async function saveRows(list){
+    const m=new Map(rows.map(r=>[r.id,r])); list.forEach(r=>m.set(r.id,r)); rows=[...m.values()]; onData();
+    try{ await B.put(list, rows); }
+    catch(e){ $("count").textContent="Lỗi ghi dữ liệu: "+(e&&e.message||e); throw e; }
+    if(B.ver) refresh().catch(()=>{});
   }
+  async function saveRow(r){ await saveRows([r]); }
   async function deleteRow(id){
-    rows=rows.filter(x=>x.id!==id); onData(); await persist();
+    rows=rows.filter(x=>x.id!==id); onData();
+    try{ await B.del(id, rows); }
+    catch(e){ $("count").textContent="Lỗi ghi dữ liệu: "+(e&&e.message||e); throw e; }
+    if(B.ver) refresh().catch(()=>{});
+  }
+  async function refresh(){
+    const d = await B.load(); rows = d.rows; lastVer = d.ver; onData();
   }
   function onData(){
     rows.sort((a,b)=>(b.taoLuc||"").localeCompare(a.taoLuc||""));
@@ -789,9 +877,9 @@ td small{display:block;color:var(--muted);font-size:.78rem}
     const t = $("imp-toast"); t.className="toast ok";
     let done = 0, fail = 0;
     {
-      const byId = new Map(rows.map(r=>[r.id,r])); todo.forEach(r=>byId.set(r.id,r)); rows=[...byId.values()]; onData(); done=todo.length;
-      try{ await persist(); }catch(e){ fail=todo.length; }
-      if(N && importFile){ try{ await N.saveFile("TepDaNhap", stampNow()+"_"+importFile.name, toB64(importFile.buf)); }catch(e){} }
+      done=todo.length;
+      try{ await saveRows(todo); }catch(e){ fail=todo.length; }
+      if(B.saveFile && importFile){ try{ await B.saveFile("TepDaNhap", stampNow()+"_"+importFile.name, toB64(importFile.buf)); }catch(e){} }
     }
     t.className = fail ? "toast err" : "toast ok";
     t.className = (fail||near) ? "toast err" : "toast ok";
@@ -815,11 +903,16 @@ td small{display:block;color:var(--muted);font-size:.78rem}
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Thuê bao");
     const buf = XLSX.write(wb, {bookType:"xlsx", type:"array"});
     const fname = `BaoCao_ThueBao_${stampNow()}.xlsx`;
-    if(N){
-      try{ const p = await N.saveFile("BaoCao", fname, toB64(buf)); say("Đã xuất "+lastResults.length+" thuê bao ra file: "+p); N.reveal(p).catch(()=>{}); }
+    const n = lastResults.length;
+    if(B.kind==="remote"){
+      let srv=""; try{ srv = await B.saveFile("BaoCao", fname, toB64(buf)); }catch(e){}
+      if(A){ const m = await androidSaveAs(fname, buf); say(m ? "Đã xuất "+n+" thuê bao ra file: "+m : "Đã huỷ lưu file trên máy này."+(srv?" Bản sao đã lưu trên máy chủ.":"")); }
+      else { downloadBlob(fname, buf); say("Đã xuất "+n+" thuê bao."+(srv?" Bản sao lưu trên máy chủ: "+srv:"")); }
+    } else if(N){
+      try{ const p = await N.saveFile("BaoCao", fname, toB64(buf)); say("Đã xuất "+n+" thuê bao ra file: "+p); N.reveal(p).catch(()=>{}); }
       catch(e){ say("Chưa lưu được file Excel: "+(e&&e.message||e)); }
     } else {
-      const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})); a.download=fname; document.body.appendChild(a); a.click(); a.remove();
+      downloadBlob(fname, buf);
     }
   };
 
@@ -828,11 +921,93 @@ td small{display:block;color:var(--muted);font-size:.78rem}
   async function loadNative(){
     const st = await N.status();
     $("folder").textContent = st.folder ? "Thư mục dữ liệu: "+st.folder : "";
-    const raw = await N.load();
-    let data = [];
-    if(raw){ try{ const j=JSON.parse(raw); data = Array.isArray(j) ? j : (j.thueBao||[]); }catch(e){ $("count").textContent="File dữ liệu bị lỗi, không đọc được."; return; } }
-    rows = data; onData();
+    try{ await refresh(); }catch(e){ $("count").textContent="File dữ liệu bị lỗi, không đọc được."; }
+    updateLanDot();
   }
+
+  /* ---------- kết nối máy chủ LAN (dùng cho màn hình đầu và nút Mạng LAN) ---------- */
+  function connectForm(box, intro){
+    const rc = getRemote() || {};
+    box.innerHTML = `<p style="margin:0 0 8px;color:var(--muted);font-size:.9rem">${intro}</p>
+      <div class="row2">
+        <label>Địa chỉ máy chủ<input class="cf-url" type="text" inputmode="url" autocomplete="off" placeholder="VD: 192.168.1.10:8686" value="${esc((rc.url||"").replace(/^https?:\/\//,""))}"></label>
+        <label>Mật khẩu (nếu có)<input class="cf-pass" type="password" autocomplete="off" value="${esc(rc.pass||"")}"></label>
+      </div>
+      <div class="actions"><button class="btn primary cf-go" type="button">Kết nối</button><span class="toast err cf-err"></span></div>`;
+    const q = c => box.querySelector(c);
+    q(".cf-go").onclick = async ()=>{
+      const cfg = {url: servedByLan ? location.origin : normUrl(q(".cf-url").value), pass: q(".cf-pass").value};
+      if(!cfg.url){ q(".cf-err").textContent="Hãy nhập địa chỉ máy chủ."; return; }
+      q(".cf-go").disabled=true; q(".cf-err").className="toast cf-err"; q(".cf-err").textContent="Đang kết nối…";
+      try{
+        const info = await api(cfg, "/api/info"); if(!info || info.app!=="SoThueBao") throw new Error("Địa chỉ này không phải máy chủ Sổ Thuê Bao.");
+        await api(cfg, "/api/ver");
+        setRemote(cfg); location.reload();
+      }catch(e){ q(".cf-err").className="toast err cf-err"; q(".cf-err").textContent=e.message||String(e); q(".cf-go").disabled=false; }
+    };
+    if(servedByLan){ q(".cf-url").closest("label").hidden=true; }
+  }
+
+  function updateLanDot(){
+    const dot=$("lan-dot");
+    if(B && B.kind==="remote"){ dot.className="lan-dot on"; return; }
+    if(isElectron && N.lanStatus){ N.lanStatus().then(s=>{ dot.className = "lan-dot"+(s.running?" on":""); }).catch(()=>{}); }
+  }
+
+  async function openLan(errMsg){
+    const body=$("lan-body"); $("lan").hidden=false;
+    if(B && B.kind==="remote"){
+      body.innerHTML = `<p style="margin:0;color:var(--muted)">Đang dùng dữ liệu chung trên máy chủ:</p>
+        <div class="addr">${esc(B.cfg.url.replace(/^https?:\/\//,""))}</div>
+        ${errMsg?`<p class="toast err" style="margin:0">${esc(errMsg)}</p>`:""}
+        <div class="actions">
+          <button class="btn primary" type="button" id="lan-retry">Thử kết nối lại</button>
+          ${servedByLan?"":'<button class="btn danger" type="button" id="lan-off">Ngắt kết nối, dùng dữ liệu trên máy này</button>'}
+        </div><hr class="sep"><div id="lan-cf"></div>`;
+      $("lan-retry").onclick = ()=>location.reload();
+      if(!servedByLan) $("lan-off").onclick = ()=>{ setRemote(null); location.reload(); };
+      connectForm($("lan-cf"), servedByLan ? "Nhập mật khẩu máy chủ (nếu được yêu cầu):" : "Hoặc đổi sang máy chủ khác:");
+      return;
+    }
+    let html = "";
+    if(isElectron && N.lanStatus){
+      const st = await N.lanStatus();
+      html += `<p style="margin:0;color:var(--muted);font-size:.9rem">Bật để các máy tính, điện thoại khác trong cùng mạng LAN dùng chung dữ liệu của máy này (máy chủ). Máy này cần mở app trong lúc các máy khác làm việc.</p>
+        <label class="chk"><input type="checkbox" id="lan-on" ${st.enabled?"checked":""}> Cho máy khác trong mạng LAN dùng chung dữ liệu</label>
+        <div class="row2">
+          <label>Cổng<input id="lan-port" type="text" inputmode="numeric" value="${esc(st.port||8686)}"></label>
+          <label>Mật khẩu truy cập<input id="lan-pass" type="text" autocomplete="off" placeholder="Để trống: không cần mật khẩu" value="${esc(st.pass||"")}"></label>
+        </div>
+        <div class="actions"><button class="btn primary" type="button" id="lan-save">Lưu cài đặt</button><span class="toast" id="lan-msg"></span></div>
+        <div id="lan-addr">${lanAddrHtml(st)}</div>
+        <hr class="sep">`;
+    }
+    html += `<div id="lan-cf"></div>`;
+    body.innerHTML = html;
+    if(isElectron && N.lanStatus){
+      $("lan-save").onclick = async ()=>{
+        const port = parseInt($("lan-port").value,10);
+        if(!(port>=1024 && port<=65535)){ $("lan-msg").className="toast err"; $("lan-msg").textContent="Cổng phải từ 1024 đến 65535."; return; }
+        $("lan-save").disabled=true;
+        const st = await N.lanSet({enabled:$("lan-on").checked, port, pass:$("lan-pass").value.trim()});
+        $("lan-save").disabled=false;
+        $("lan-msg").className = st.error ? "toast err" : "toast ok";
+        $("lan-msg").textContent = st.error ? st.error : (st.running ? "Đã bật chia sẻ." : "Đã tắt chia sẻ.");
+        $("lan-addr").innerHTML = lanAddrHtml(st); updateLanDot();
+      };
+    }
+    connectForm($("lan-cf"), isElectron
+      ? "Hoặc dùng dữ liệu của một máy chủ khác trong mạng LAN (máy này sẽ không dùng thư mục riêng nữa):"
+      : "Kết nối tới máy tính đang chạy Sổ Thuê Bao (exe) có bật chia sẻ LAN để dùng chung dữ liệu:");
+  }
+  function lanAddrHtml(st){
+    if(!st.running) return `<p style="margin:0;color:var(--muted);font-size:.88rem">Chia sẻ LAN đang tắt.</p>`;
+    const list = (st.addresses||[]).map(a=>`<div class="addr">${esc(a)}:${st.port}</div>`).join("") || `<div class="addr">(không tìm thấy địa chỉ mạng)</div>`;
+    return `<p style="margin:0 0 6px;font-size:.88rem">Máy khác nhập địa chỉ dưới đây vào app (nút Mạng LAN) hoặc mở bằng trình duyệt: <b>http://</b>địa chỉ</p>${list}`;
+  }
+  $("btn-lan").onclick = ()=>openLan();
+  $("lan-close").onclick = ()=>{ $("lan").hidden=true; };
+
   function showSetup(st){
     $("setup").hidden = false;
     let chosen = st && st.suggest ? st.suggest : null;
@@ -851,9 +1026,24 @@ td small{display:block;color:var(--muted);font-size:.78rem}
       try{ const r = await N.confirm(chosen); if(r && r.error) throw new Error(r.error); $("setup").hidden = true; await loadNative(); }
       catch(e){ $("setup-err").textContent = "Không dùng được thư mục này: "+(e&&e.message||e); $("setup-ok").disabled=false; }
     };
+    connectForm($("setup-connect"), "<b>Hoặc</b> dùng chung dữ liệu với máy chủ trong mạng LAN (máy tính đang chạy Sổ Thuê Bao có bật chia sẻ):");
   }
+
+  setInterval(async ()=>{
+    if(!B || !B.ver || document.hidden) return;
+    try{ const v = await B.ver(); if(v!==lastVer) await refresh(); if(B.kind==="remote") $("lan-dot").className="lan-dot on"; }
+    catch(e){ if(B.kind==="remote"){ $("lan-dot").className="lan-dot"; $("count").textContent="Mất kết nối máy chủ LAN…"; } }
+  }, 4000);
+
   (async ()=>{
-    if(!N){ rows = lsLoad(); onData(); banner(); return; }
+    B = makeBackend();
+    if(B.kind==="remote"){
+      $("folder").textContent = B.label();
+      try{ await refresh(); updateLanDot(); }
+      catch(e){ $("count").textContent = e.message; openLan(e.message); }
+      return;
+    }
+    if(B.kind==="browser"){ await refresh(); banner(); return; }
     try{
       const st = await N.status();
       if(!st.configured){ setCount(); showSetup(st); return; }
@@ -863,7 +1053,7 @@ td small{display:block;color:var(--muted);font-size:.78rem}
 
   function banner(){
     const b=$("banner"); b.hidden=false;
-    b.textContent="Đang chạy trên trình duyệt: dữ liệu lưu trong trình duyệt này. Dùng bản exe hoặc apk để lưu vào thư mục riêng.";
+    b.textContent="Đang chạy trên trình duyệt: dữ liệu lưu trong trình duyệt này. Dùng bản exe hoặc apk để lưu vào thư mục riêng, hoặc bấm Mạng LAN để dùng chung dữ liệu với máy chủ.";
   }
 })();
 </script>
